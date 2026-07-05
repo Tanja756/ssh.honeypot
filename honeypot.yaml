@@ -1,0 +1,43 @@
+# ── SSH Honeypot Configuration ─────────────────────────────────
+# YAML config — see banners.py for available OS profiles.
+#
+# Priority (highest wins):  CLI args  >  this file  >  profile defaults
+
+# OS emulation profile  (see `python banners.py --list` for all)
+profile: ubuntu-22.04
+
+# Override individual profile values (optional)
+# ssh_banner: SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3
+# host_key_type: rsa
+# host_key_bits: 4096
+
+# ── Network ────────────────────────────────────────────────────
+bind_host: 0.0.0.0
+bind_port: 2222
+backlog: 100
+
+# ── Timeouts (seconds) ─────────────────────────────────────────
+connection_timeout: 60.0
+auth_timeout: 30.0
+
+# ── Rate limiting (per source IP) ──────────────────────────────
+rate_window: 60               # seconds for connection limit
+rate_max_conn: 5              # max connections per window per IP
+auth_rate_window: 60          # seconds for auth attempt limit
+auth_rate_max_attempts: 10    # max auth attempts per window per IP
+
+# ── Logging ────────────────────────────────────────────────────
+log_file: honeypot.log
+log_max_size: 104857600       # bytes before rotation (100 MB)
+log_max_backups: 2            # compressed archives to keep
+log_max_field_len: 256        # truncate username/password longer than this
+log_json: true
+
+# ── Security (requires root) ───────────────────────────────────
+drop_privileges: false
+run_as_user: nobody
+run_as_group: nogroup
+chroot_dir: /var/empty
+
+# ── Host key ───────────────────────────────────────────────────
+host_key_path: ssh_host_key

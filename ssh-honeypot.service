@@ -1,0 +1,38 @@
+[Unit]
+Description=SSH Honeypot – credential capture
+Documentation=https://github.com/anomalyco/opencode
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+ExecStart=/usr/bin/python3 /opt/ssh-honeypot/ssh_honeypot.py --port 2222
+WorkingDirectory=/opt/ssh-honeypot
+Restart=always
+RestartSec=10
+
+# State & logs
+StateDirectory=ssh-honeypot
+ReadWritePaths=/var/lib/ssh-honeypot
+
+# Hardening
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=256M
+TasksMax=32
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@basic-io @signal @network-io @io-event
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+ssh_host_key
+honeypot.log
+*.pyc
+__pycache__/
+*.swp
+*.swo
+*~
+.DS_Store
+*.egg-info/
+dist/
+build/
