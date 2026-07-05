@@ -251,6 +251,7 @@ class HoneypotServer(paramiko.ServerInterface):
         auth_limiter: RateLimiter, transport: paramiko.Transport,
     ) -> None:
         super().__init__()
+        self.event = threading.Event()
         self._peer = peer
         self._client_version = client_version
         self._auth_limiter = auth_limiter
