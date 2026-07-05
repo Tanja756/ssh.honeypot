@@ -7,14 +7,14 @@ After=network.target
 Type=simple
 User=nobody
 Group=nogroup
-ExecStart=/usr/bin/python3 /opt/ssh-honeypot/ssh_honeypot.py --port 2222
+ExecStart=/usr/bin/python3 /opt/ssh-honeypot/ssh_honeypot.py --port 2222 --log /var/log/ssh-honeypot/honeypot.log
 WorkingDirectory=/opt/ssh-honeypot
 Restart=always
 RestartSec=10
 
-# State & logs
-StateDirectory=ssh-honeypot
-ReadWritePaths=/var/lib/ssh-honeypot
+# Logs
+LogsDirectory=ssh-honeypot
+ReadWritePaths=/var/log/ssh-honeypot
 
 # Hardening
 PrivateTmp=true

@@ -4,7 +4,7 @@ set -euo pipefail
 NAME="ssh-honeypot"
 SRC_DIR="/opt/${NAME}"
 SERVICE_FILE="/etc/systemd/system/${NAME}.service"
-LOG_DIR="/var/lib/${NAME}"
+LOG_DIR="/var/log/${NAME}"
 
 if [[ $EUID -ne 0 ]]; then
     echo "[-] This script must be run as root." >&2
