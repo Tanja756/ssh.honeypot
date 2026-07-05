@@ -40,12 +40,25 @@ def top(seq, n: int = 20) -> list[tuple[str, int]]:
     return Counter(seq).most_common(n)
 
 
+def _default_log() -> str:
+    candidates = [
+        "honeypot.log",
+        "/var/log/ssh-honeypot/honeypot.log",
+    ]
+    for p in candidates:
+        if Path(p).exists():
+            return p
+    return candidates[0]
+
+
 def main() -> None:
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <logfile>", file=sys.stderr)
+    log_path = sys.argv[1] if len(sys.argv) > 1 else _default_log()
+
+    if not Path(log_path).exists():
+        print(f"Log not found: {log_path}", file=sys.stderr)
         sys.exit(1)
 
-    records = iter_logs(sys.argv[1])
+    records = iter_logs(log_path)
     total = len(records)
     auths = [r for r in records if r.get("event") == "auth_attempt"]
 
