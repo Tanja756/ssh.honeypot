@@ -1,6 +1,5 @@
 [Unit]
 Description=SSH Honeypot – credential capture
-Documentation=https://github.com/anomalyco/opencode
 After=network.target
 
 [Service]
