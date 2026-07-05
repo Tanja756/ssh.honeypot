@@ -16,7 +16,7 @@ apt-get update -qq
 apt-get install -y -qq python3 python3-pip gosu >/dev/null
 
 echo "[+] Installing Python packages..."
-pip3 install -q --break-system-packages -r "$(dirname "$0")/requirements.txt"
+pip3 install -q -r "$(dirname "$0")/requirements.txt"
 
 echo "[+] Creating ${SRC_DIR}..."
 mkdir -p "${SRC_DIR}"
