@@ -250,6 +250,7 @@ class HoneypotServer(paramiko.ServerInterface):
         self, peer: tuple, client_version: str,
         auth_limiter: RateLimiter, transport: paramiko.Transport,
     ) -> None:
+        super().__init__()
         self._peer = peer
         self._client_version = client_version
         self._auth_limiter = auth_limiter
@@ -451,7 +452,7 @@ def handle_connection(
         # Wait for auth to finish (client gets rejected, then disconnects).
         # Using auth_event avoids blocking on accept() for the full timeout
         # after authentication has already been rejected.
-        transport.auth_event.wait(CONFIG["auth_timeout"])
+        transport.server_object.event.wait(CONFIG["auth_timeout"])
         # Drain any stray channel that snuck through, then close.
         channel = transport.accept(0.5)
         if channel is not None:
