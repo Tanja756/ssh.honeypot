@@ -23,11 +23,13 @@ import os
 import pwd
 import resource
 import shutil
+import random
 import signal
 import socket
 import sys
 import threading
 import time
+import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +39,9 @@ import paramiko
 import yaml
 
 import banners
+import blacklist
+import fingerprints
+import geoip
 
 # ── Configuration ──────────────────────────────────────────────
 # Defaults — overridden by honeypot.yaml + profile + CLI args
@@ -53,6 +58,12 @@ CONFIG: Dict[str, Any] = {
     "host_key_path": "ssh_host_key",
     "host_key_type": "rsa",
     "host_key_bits": 4096,
+    "host_key_extra_path": "",
+    "host_key_extra_type": "",
+    "host_key_extra_bits": 0,
+    "auth_delay_min": 1.0,
+    "auth_delay_max": 3.0,
+    "auth_methods": "publickey,password,keyboard-interactive",
     "rate_window": 60,
     "rate_max_conn": 5,
     "auth_rate_window": 60,
@@ -62,10 +73,17 @@ CONFIG: Dict[str, Any] = {
     "log_max_backups": 2,
     "log_max_field_len": 256,
     "log_json": True,
+    "geoip_city_db": "",
+    "geoip_asn_db": "",
+    "geoip_cache_size": 10000,
     "drop_privileges": False,
     "run_as_user": "nobody",
     "run_as_group": "nogroup",
     "chroot_dir": "/var/empty",
+    "blacklist_enabled": False,
+    "blacklist_ban_after": 100,
+    "blacklist_ban_command": "",
+    "blacklist_ban_file": "",
 }
 
 # ── Logging ────────────────────────────────────────────────────
@@ -141,6 +159,8 @@ class JSONFormatter(logging.Formatter):
 
 
 _fh: Optional[CompressedRotatingFileHandler] = None
+_geo_resolver: geoip.GeoResolver = geoip.GeoResolver()
+_blacklist_manager: blacklist.BlacklistManager = blacklist.BlacklistManager()
 
 _sh = logging.StreamHandler()
 _sh.setLevel(logging.INFO)
@@ -249,6 +269,7 @@ class HoneypotServer(paramiko.ServerInterface):
     def __init__(
         self, peer: tuple, client_version: str,
         auth_limiter: RateLimiter, transport: paramiko.Transport,
+        session_id: str, attack_id: str,
     ) -> None:
         super().__init__()
         self.event = threading.Event()
@@ -257,9 +278,15 @@ class HoneypotServer(paramiko.ServerInterface):
         self._auth_limiter = auth_limiter
         self._transport = transport
         self._auth_attempts = 0
+        self._session_id = session_id
+        self._attack_id = attack_id
+        self._auth_sequence: list[str] = []
+
+    def _log(self, event_name: str, **fields: Any) -> None:
+        log_event(event_name, session_id=self._session_id, attack_id=self._attack_id, **fields)
 
     def get_allowed_auths(self, username: str = "") -> str:
-        return "password,keyboard-interactive"
+        return CONFIG.get("auth_methods", "publickey,password,keyboard-interactive")
 
     def _truncated(self, val: str, label: str = "") -> str:
         max_len = CONFIG.get("log_max_field_len", 256)
@@ -267,10 +294,20 @@ class HoneypotServer(paramiko.ServerInterface):
             return val[:max_len] + "..."
         return val
 
+    def _auth_delay(self) -> None:
+        delay = random.uniform(CONFIG.get("auth_delay_min", 1.0), CONFIG.get("auth_delay_max", 3.0))
+        time.sleep(delay)
+
     def _log_auth(self, username: str, password: str, auth_method: str, **extras: Any) -> None:
         ip = self._peer[0]
+
+        _blacklist_manager.record_attempt(ip)
+        if _blacklist_manager.is_banned(ip):
+            self._transport.close()
+            return
+
         if not self._auth_limiter.allow(ip):
-            log_event(
+            self._log(
                 "auth_rate_limited",
                 src_ip=ip, auth_method=auth_method,
                 client_version=self._client_version,
@@ -278,7 +315,12 @@ class HoneypotServer(paramiko.ServerInterface):
             self._transport.close()
             return
 
-        log_event(
+        self._auth_sequence.append(auth_method)
+        fp = fingerprints.fingerprint_client(self._client_version, self._auth_sequence)
+
+        geo = _geo_resolver.lookup(ip)
+
+        self._log(
             "auth_attempt",
             src_ip=ip,
             src_port=self._peer[1],
@@ -286,11 +328,14 @@ class HoneypotServer(paramiko.ServerInterface):
             password=self._truncated(password),
             auth_method=auth_method,
             client_version=self._client_version,
+            client_name=fp.get("client_name", ""),
+            **geo,
             **extras,
         )
 
     def check_auth_none(self, username: str) -> int:
         self._log_auth(username=username, password="", auth_method="none")
+        self._auth_delay()
         self.event.set()
         return paramiko.AUTH_FAILED
 
@@ -301,7 +346,7 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="password",
             attempt=self._auth_attempts,
         )
-        time.sleep(2)
+        self._auth_delay()
         self.event.set()
         return paramiko.AUTH_FAILED
 
@@ -311,6 +356,7 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="publickey",
             fingerprint=key.get_fingerprint().hex() if hasattr(key, 'get_fingerprint') else "",
         )
+        self._auth_delay()
         self.event.set()
         return paramiko.AUTH_FAILED
 
@@ -320,6 +366,7 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="keyboard-interactive",
             subtypes=",".join(subtypes) if subtypes else "",
         )
+        self._auth_delay()
         self.event.set()
         return paramiko.AUTH_FAILED, []
 
@@ -331,11 +378,12 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="keyboard-interactive",
             attempt=self._auth_attempts,
         )
+        self._auth_delay()
         self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_channel_request(self, kind: str, chanid: int) -> int:
-        log_event(
+        self._log(
             "channel_request",
             src_ip=self._peer[0],
             kind=kind,
@@ -354,7 +402,7 @@ class HoneypotServer(paramiko.ServerInterface):
         return False
 
     def check_channel_exec_request(self, channel: paramiko.Channel, command: bytes) -> bool:
-        log_event(
+        self._log(
             "exec_request",
             src_ip=self._peer[0],
             command=command.decode(errors="replace")[:CONFIG.get("log_max_field_len", 256)],
@@ -404,6 +452,14 @@ def load_or_generate_host_key(path: str, key_type: str = "rsa", bits: int = 4096
     return key
 
 
+def load_or_generate_extra_host_key(
+    path: str, key_type: str, bits: int,
+) -> paramiko.PKey | None:
+    if not path or not key_type:
+        return None
+    return load_or_generate_host_key(path, key_type, max(bits, 256))
+
+
 # ── TCP keepalive ──────────────────────────────────────────────
 
 def enable_tcp_keepalive(
@@ -429,7 +485,7 @@ def enable_tcp_keepalive(
 def handle_connection(
     client_sock: socket.socket,
     addr: tuple,
-    host_key: paramiko.PKey,
+    host_keys: list[paramiko.PKey],
     conn_limiter: RateLimiter,
     auth_limiter: RateLimiter,
 ) -> None:
@@ -451,9 +507,12 @@ def handle_connection(
         transport = paramiko.Transport(client_sock)
         transport.banner_timeout = CONFIG["auth_timeout"]
         transport.local_version = CONFIG["ssh_banner"]
-        transport.add_server_key(host_key)
+        for key in host_keys:
+            transport.add_server_key(key)
 
-        server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport)
+        session_id = str(uuid.uuid4())
+        attack_id = session_id
+        server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport, session_id, attack_id)
         transport.start_server(server=server)
 
         # Wait for auth to finish (client gets rejected, then disconnects).
@@ -627,6 +686,19 @@ def main() -> None:
     print_banner()
     _reconfigure_logging()
 
+    global _geo_resolver, _blacklist_manager
+    _geo_resolver = geoip.GeoResolver(
+        city_db_path=CONFIG["geoip_city_db"] or None,
+        asn_db_path=CONFIG["geoip_asn_db"] or None,
+        cache_size=CONFIG["geoip_cache_size"],
+    )
+    _blacklist_manager = blacklist.BlacklistManager(
+        enabled=CONFIG["blacklist_enabled"],
+        ban_after=CONFIG["blacklist_ban_after"],
+        ban_command=CONFIG["blacklist_ban_command"],
+        ban_file=CONFIG["blacklist_ban_file"],
+    )
+
     # Signal handling for graceful shutdown
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -634,8 +706,15 @@ def main() -> None:
     # Apply resource limits
     set_resource_limits()
 
-    # Load or generate host key
-    host_key = load_or_generate_host_key(CONFIG["host_key_path"], CONFIG["host_key_type"], CONFIG["host_key_bits"])
+    # Load or generate host key(s)
+    host_keys: list[paramiko.PKey] = [
+        load_or_generate_host_key(CONFIG["host_key_path"], CONFIG["host_key_type"], CONFIG["host_key_bits"]),
+    ]
+    extra_key = load_or_generate_extra_host_key(
+        CONFIG["host_key_extra_path"], CONFIG["host_key_extra_type"], CONFIG["host_key_extra_bits"],
+    )
+    if extra_key is not None:
+        host_keys.append(extra_key)
 
     # Rate limiters
     conn_limiter = RateLimiter(CONFIG["rate_window"], CONFIG["rate_max_conn"])
@@ -690,7 +769,7 @@ def main() -> None:
 
         t = threading.Thread(
             target=handle_connection,
-            args=(client, addr, host_key, conn_limiter, auth_limiter),
+            args=(client, addr, host_keys, conn_limiter, auth_limiter),
             daemon=True,
         )
         t.start()

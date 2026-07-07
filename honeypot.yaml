@@ -39,5 +39,24 @@ run_as_user: nobody
 run_as_group: nogroup
 chroot_dir: /var/empty
 
-# ── Host key ───────────────────────────────────────────────────
+# ── Host key(s) ────────────────────────────────────────────────
 host_key_path: ssh_host_key
+# host_key_extra_path: ssh_host_key_ed25519
+# host_key_extra_type: ed25519
+# host_key_extra_bits: 256
+
+# ── Auth behavior ──────────────────────────────────────────────
+auth_delay_min: 1.0               # min seconds before AUTH_FAILED
+auth_delay_max: 3.0               # max seconds before AUTH_FAILED
+auth_methods: "publickey,password,keyboard-interactive"
+
+# ── GeoIP (optional: install geoip2 + download GeoLite2 databases) ─
+# geoip_city_db: /opt/GeoIP/GeoLite2-City.mmdb
+# geoip_asn_db: /opt/GeoIP/GeoLite2-ASN.mmdb
+# geoip_cache_size: 10000
+
+# ── Blacklist (optional) ───────────────────────────────────────
+# blacklist_enabled: true
+# blacklist_ban_after: 100
+# blacklist_ban_command: iptables -A INPUT -s {ip} -j DROP
+# blacklist_ban_file: blacklist.json
