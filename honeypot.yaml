@@ -41,9 +41,9 @@ chroot_dir: /var/empty
 
 # ── Host key(s) ────────────────────────────────────────────────
 host_key_path: ssh_host_key
-# host_key_extra_path: ssh_host_key_ed25519
-# host_key_extra_type: ed25519
-# host_key_extra_bits: 256
+host_key_extra_path: ssh_host_key_ed25519
+host_key_extra_type: ed25519
+host_key_extra_bits: 256
 
 # ── Auth behavior ──────────────────────────────────────────────
 auth_delay_min: 1.0               # min seconds before AUTH_FAILED

@@ -23,6 +23,7 @@ import os
 import pwd
 import resource
 import shutil
+import concurrent.futures
 import random
 import signal
 import socket
@@ -68,6 +69,7 @@ CONFIG: Dict[str, Any] = {
     "rate_max_conn": 5,
     "auth_rate_window": 60,
     "auth_rate_max_attempts": 10,
+
     "log_file": "honeypot.log",
     "log_max_size": 104857600,
     "log_max_backups": 2,
@@ -424,14 +426,34 @@ def _load_key_by_type(path: str, key_type: str) -> paramiko.PKey:
     return cls(filename=path)
 
 
+def _gen_ed25519_key() -> tuple[paramiko.Ed25519Key, bytes]:
+    from cryptography.hazmat.primitives.asymmetric import ed25519 as _e
+    from cryptography.hazmat.primitives import serialization as _s
+    import io as _io
+    _pk = _e.Ed25519PrivateKey.generate()
+    _pem = _pk.private_bytes(
+        encoding=_s.Encoding.PEM,
+        format=_s.PrivateFormat.OpenSSH,
+        encryption_algorithm=_s.NoEncryption(),
+    )
+    return paramiko.Ed25519Key.from_private_key(_io.StringIO(_pem.decode())), _pem
+
+
 def _generate_key(key_type: str, bits: int) -> paramiko.PKey:
     if key_type == "rsa":
         return paramiko.RSAKey.generate(bits)
     elif key_type == "ecdsa":
         return paramiko.ECDSAKey.generate(bits=bits)
     elif key_type == "ed25519":
-        return paramiko.Ed25519Key.generate()
+        return _gen_ed25519_key()[0]
     raise ValueError(f"Unsupported key type: {key_type}")
+
+
+def _write_key_file(key: paramiko.PKey, key_type: str, path: str, write: bytes | None = None) -> None:
+    if key_type == "ed25519" and write:
+        Path(path).write_bytes(write)
+    else:
+        key.write_private_key_file(path)
 
 
 def load_or_generate_host_key(path: str, key_type: str = "rsa", bits: int = 4096) -> paramiko.PKey:
@@ -446,8 +468,16 @@ def load_or_generate_host_key(path: str, key_type: str = "rsa", bits: int = 4096
             key_path.unlink()
 
     log_event("host_key_generate", type=key_type, bits=bits)
-    key = _generate_key(key_type, bits)
-    key.write_private_key_file(str(key_path))
+    key, pem = (None, None)
+    if key_type == "rsa":
+        key = paramiko.RSAKey.generate(bits)
+    elif key_type == "ecdsa":
+        key = paramiko.ECDSAKey.generate(bits=bits)
+    elif key_type == "ed25519":
+        key, pem = _gen_ed25519_key()
+    else:
+        raise ValueError(f"Unsupported key type: {key_type}")
+    _write_key_file(key, key_type, str(key_path), write=pem)
     key_path.chmod(0o600)
     return key
 
@@ -486,20 +516,11 @@ def handle_connection(
     client_sock: socket.socket,
     addr: tuple,
     host_keys: list[paramiko.PKey],
-    conn_limiter: RateLimiter,
     auth_limiter: RateLimiter,
 ) -> None:
     peer_ip, peer_port = addr
     session_id = str(uuid.uuid4())
     attack_id = session_id
-
-    if not conn_limiter.allow(peer_ip):
-        log_event("connection_dropped", src_ip=peer_ip, reason="rate_limit", session_id=session_id)
-        try:
-            client_sock.close()
-        except OSError:
-            pass
-        return
 
     enable_tcp_keepalive(client_sock)
     client_sock.settimeout(CONFIG["connection_timeout"])
@@ -513,12 +534,11 @@ def handle_connection(
             transport.add_server_key(key)
 
         server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport, session_id, attack_id)
-        server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport, session_id, attack_id)
-        transport.start_server(server=server)
-
+        event = threading.Event()
+        transport.start_server(event=event, server=server)
+        # Wait for SSH key exchange to complete
+        event.wait()
         # Wait for auth to finish (client gets rejected, then disconnects).
-        # Using auth_event avoids blocking on accept() for the full timeout
-        # after authentication has already been rejected.
         transport.server_object.event.wait(CONFIG["auth_timeout"])
         # Drain any stray channel that snuck through, then close.
         channel = transport.accept(0.5)
@@ -531,7 +551,7 @@ def handle_connection(
         log_event("connection_timeout", src_ip=peer_ip, session_id=session_id)
     except EOFError:
         pass
-    except Exception as exc:
+    except (RuntimeError, Exception) as exc:
         log_event("connection_error", src_ip=peer_ip, error=str(exc), session_id=session_id)
     finally:
         if transport is not None:
@@ -754,9 +774,7 @@ def main() -> None:
         print(f"  [+] Running as {CONFIG['run_as_user']}:{CONFIG['run_as_group']}")
     print()
 
-    active_threads: list[threading.Thread] = []
-
-    # Main accept loop
+    # Main accept loop — sequential (no threads) to avoid paramiko thread leak
     while _running:
         try:
             client, addr = _server_sock.accept()
@@ -768,13 +786,16 @@ def main() -> None:
             log_error("accept_error", error=str(exc))
             continue
 
-        t = threading.Thread(
-            target=handle_connection,
-            args=(client, addr, host_keys, conn_limiter, auth_limiter),
-            daemon=True,
-        )
-        t.start()
-        active_threads.append(t)
+        peer_ip = addr[0]
+        if not conn_limiter.allow(peer_ip):
+            log_event("connection_dropped", src_ip=peer_ip, reason="rate_limit")
+            try:
+                client.close()
+            except OSError:
+                pass
+            continue
+
+        handle_connection(client, addr, host_keys, auth_limiter)
 
     # Cleanup
     _running = False
@@ -784,9 +805,6 @@ def main() -> None:
         except OSError:
             pass
 
-    # Wait for active handlers to finish (with timeout)
-    for t in active_threads:
-        t.join(timeout=5.0)
     log_event("server_stop")
     print("  [+] Honeypot stopped.")
 

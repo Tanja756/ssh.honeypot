@@ -5,11 +5,16 @@ A production-ready SSH honeypot that captures attacker credentials in isolation.
 ## Features
 
 - **Credential capture** — logs every login/password pair with source IP, port, auth method, and client version
+- **Session correlation** — each connection gets a unique `session_id` / `attack_id` to correlate all events (auth attempts, drops, timeouts) belonging to the same attack
 - **OS emulation** — 14 built-in profiles (Ubuntu, Debian, CentOS, FreeBSD, Alpine, Arch, openSUSE) with realistic SSH banners and host key types
+- **Client fingerprinting** — captures SSH client version, library name, and public key fingerprint for attacker profiling
 - **Security-first** — privilege dropping, chroot jail, resource limits, TCP keepalive, rate limiting per source IP
 - **No shell access** — all channel, shell, PTY, and exec requests are rejected
 - **Connection rate limiting** — max connections per IP per time window
 - **Auth rate limiting** — max authentication attempts per IP per time window (separate from connection limit)
+- **GeoIP enrichment** — resolves attacker IP to country, city, ASN, coordinates (requires GeoLite2 database)
+- **Blacklist integration** — skips logging for known friendly IPs (configurable in `honeypot.yaml`)
+- **Real-time dashboard** — web UI on port 5000 showing live stats, connection chart, top IPs, top passwords, and country map via `dashboard.py`
 - **Log rotation** — automatic gzip compression (configurable size, keeps N archives)
 - **Field truncation** — long usernames/passwords are truncated to prevent log inflation
 - **Graceful shutdown** — drains active connections on SIGINT / SIGTERM
@@ -109,22 +114,55 @@ All settings in `honeypot.yaml`. CLI flags override the config file.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `host_key_path` | `ssh_host_key` | Path to host key (auto-generated if missing) |
+| `host_key_path` | `ssh_host_key` | Path to RSA host key (auto-generated if missing) |
+| `extra_key_ed25519` | `true` | Also generate an Ed25519 host key |
+
+### GeoIP (optional)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `geoip_db_path` | `GeoLite2-City.mmdb` | Path to MaxMind GeoLite2 database |
+| `geoip_enabled` | `true` | Enable GeoIP lookup |
+
+To use GeoIP, download the free GeoLite2-City.mmdb from [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
+
+### Blacklist
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `blacklist_ips` | `[]` | List of IPs / CIDRs to skip logging for |
+| `blacklist_log_skip` | `true` | When true, blacklisted IPs are still shown in dashboard but not written to log |
+
+### Dashboard
+
+```bash
+python3 dashboard.py honeypot.log
+```
+
+Starts a web UI at `http://0.0.0.0:5000` with:
+- Live connection chart (last 5 min)
+- Top 10 attacker IPs
+- Top 10 passwords
+- Country map (if GeoIP populated)
+- Session list with timestamps
 
 ## Log format
 
 ```json
-{"timestamp": "2026-07-05T00:00:00", "event": "auth_attempt", "src_ip": "10.0.0.1", "username": "root", "password": "admin123", "auth_method": "password"}
+{"timestamp": "2026-07-05T00:00:00", "event": "auth_attempt", "session_id": "550e8400-e29b-41d4-a716-446655440000", "attack_id": "550e8400-e29b-41d4-a716-446655440000", "src_ip": "10.0.0.1", "src_port": 54321, "username": "root", "password": "admin123", "auth_method": "password", "client_version": "SSH-2.0-OpenSSH_8.9p1", "client_name": "paramiko", "fingerprint": "md5:ab:cd:ef..."}
 ```
+
+Each event includes `session_id` / `attack_id` for correlating all events from the same connection.
 
 ### Events
 
 | Event | Description |
 |-------|-------------|
-| `auth_attempt` | Authentication attempt logged |
+| `auth_attempt` | Authentication attempt with method, username, password, fingerprint |
 | `auth_rate_limited` | Auth attempt dropped due to rate limit |
 | `connection_dropped` | Connection rejected (rate limit) |
 | `connection_timeout` | Socket timeout |
+| `connection_error` | Internal error with message |
 | `channel_request` | Channel open request |
 | `exec_request` | Command execution request (rejected) |
 | `server_start` / `server_stop` | Server lifecycle |
