@@ -3,7 +3,7 @@
 Web Dashboard for SSH Honeypot.
 
 Usage:
-    python3 dashboard.py [--host 127.0.0.1] [--port 5000] [--log honeypot.log]
+    python3 dashboard.py [--host 0.0.0.0] [--port 1235] [--log honeypot.log]
 
 Opens a browser-accessible dashboard showing real-time attack statistics
 with a live credential stream via Server-Sent Events.
@@ -231,7 +231,7 @@ def events_stream() -> flask.Response:
 
 def parse_args() -> tuple[str, int, str]:
     host = "127.0.0.1"
-    port = 5000
+    port = 1235
     log = "honeypot.log"
 
     args = sys.argv[1:]

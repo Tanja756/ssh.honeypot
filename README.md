@@ -139,7 +139,7 @@ To use GeoIP, download the free GeoLite2-City.mmdb from [MaxMind](https://dev.ma
 python3 dashboard.py honeypot.log
 ```
 
-Starts a web UI at `http://0.0.0.0:5000` with:
+Starts a web UI at `http://0.0.0.0:1235` with:
 - Live connection chart (last 5 min)
 - Top 10 attacker IPs
 - Top 10 passwords

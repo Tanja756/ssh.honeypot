@@ -11,9 +11,12 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+DASHBOARD_SERVICE_FILE="/etc/systemd/system/${NAME}-dashboard.service"
+GEOIP_DB="${SRC_DIR}/GeoLite2-City.mmdb"
+
 echo "[+] Installing system dependencies..."
 apt-get update -qq
-apt-get install -y -qq python3 python3-pip gosu >/dev/null
+apt-get install -y -qq python3 python3-pip gosu curl >/dev/null
 
 echo "[+] Installing Python packages..."
 pip3 install -q -r "$(dirname "$0")/requirements.txt"
@@ -27,20 +30,38 @@ echo "[+] Creating ${LOG_DIR}..."
 mkdir -p "${LOG_DIR}"
 chown nobody:nogroup "${LOG_DIR}"
 
-echo "[+] Installing systemd service..."
-cp "${SRC_DIR}/${NAME}.service" "${SERVICE_FILE}"
-systemctl daemon-reload
-
-if systemctl is-enabled "${NAME}" &>/dev/null; then
-    echo "[+] Restarting ${NAME}..."
-    systemctl restart "${NAME}"
-else
-    echo "[+] Enabling and starting ${NAME}..."
-    systemctl enable --now "${NAME}"
+# ── GeoLite2 ──────────────────────────────────────────────────
+if [[ ! -f "${GEOIP_DB}" ]]; then
+    echo "[+] Downloading GeoLite2-City.mmdb ..."
+    if curl -sL -o "${GEOIP_DB}" "https://git.io/GeoLite2-City.mmdb" 2>/dev/null; then
+        echo "[+] GeoLite2 downloaded (${GEOIP_DB})"
+    else
+        echo "[!] GeoLite2 download failed — dashboard country map disabled."
+        echo "    Download manually from https://dev.maxmind.com/geoip/geolite2-free-geolocation-data"
+        echo "    and place at: ${GEOIP_DB}"
+    fi
 fi
 
-echo "[+] Status:"
-systemctl status "${NAME}" --no-pager 2>&1 | head -10
+echo "[+] Installing systemd services..."
+cp "${SRC_DIR}/${NAME}.service" "${SERVICE_FILE}"
+cp "${SRC_DIR}/dashboard.service" "${DASHBOARD_SERVICE_FILE}"
+systemctl daemon-reload
 
-echo ""
+for svc in "${NAME}" "${NAME}-dashboard"; do
+    svc_file="/etc/systemd/system/${svc}.service"
+    if systemctl is-enabled "${svc}" &>/dev/null; then
+        echo "[+] Restarting ${svc}..."
+        systemctl restart "${svc}"
+    else
+        echo "[+] Enabling and starting ${svc}..."
+        systemctl enable --now "${svc}"
+    fi
+done
+
+echo "[+] Status:"
+for svc in "${NAME}" "${NAME}-dashboard"; do
+    systemctl status "${svc}" --no-pager 2>&1 | head -8
+    echo ""
+done
+
 echo "[✔] Deployment complete."

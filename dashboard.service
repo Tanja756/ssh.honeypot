@@ -1,0 +1,32 @@
+[Unit]
+Description=SSH Honeypot Dashboard – web UI
+After=network.target ssh-honeypot.service
+Requires=ssh-honeypot.service
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+ExecStart=/usr/bin/python3 /opt/ssh-honeypot/dashboard.py --host 0.0.0.0 --port 1235 --log /var/log/ssh-honeypot/honeypot.log
+WorkingDirectory=/opt/ssh-honeypot
+Restart=always
+RestartSec=5
+
+# Log access
+ReadWritePaths=/opt/ssh-honeypot
+LogsDirectory=ssh-honeypot
+
+# Hardening
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+NoNewPrivileges=true
+MemoryMax=256M
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
