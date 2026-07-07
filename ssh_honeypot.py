@@ -338,7 +338,6 @@ class HoneypotServer(paramiko.ServerInterface):
     def check_auth_none(self, username: str) -> int:
         self._log_auth(username=username, password="", auth_method="none")
         self._auth_delay()
-        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_auth_password(self, username: str, password: str) -> int:
@@ -349,7 +348,6 @@ class HoneypotServer(paramiko.ServerInterface):
             attempt=self._auth_attempts,
         )
         self._auth_delay()
-        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_auth_publickey(self, username: str, key: paramiko.PKey) -> int:
@@ -359,7 +357,6 @@ class HoneypotServer(paramiko.ServerInterface):
             fingerprint=key.get_fingerprint().hex() if hasattr(key, 'get_fingerprint') else "",
         )
         self._auth_delay()
-        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_auth_interactive(self, username: str, subtypes: list[str]) -> tuple[int, list[tuple[str, bool, bool]]]:
@@ -369,8 +366,7 @@ class HoneypotServer(paramiko.ServerInterface):
             subtypes=",".join(subtypes) if subtypes else "",
         )
         self._auth_delay()
-        self.event.set()
-        return paramiko.AUTH_FAILED, []
+        return paramiko.AUTH_FAILED, [("Password: ", False, True)]
 
     def check_auth_interactive_response(self, responses: list[str]) -> int:
         password = responses[0] if responses else ""
@@ -381,7 +377,6 @@ class HoneypotServer(paramiko.ServerInterface):
             attempt=self._auth_attempts,
         )
         self._auth_delay()
-        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_channel_request(self, kind: str, chanid: int) -> int:
@@ -536,14 +531,9 @@ def handle_connection(
         server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport, session_id, attack_id)
         event = threading.Event()
         transport.start_server(event=event, server=server)
-        # Wait for SSH key exchange to complete
         event.wait()
-        # Wait for auth to finish (client gets rejected, then disconnects).
-        transport.server_object.event.wait(CONFIG["auth_timeout"])
-        # Drain any stray channel that snuck through, then close.
-        channel = transport.accept(0.5)
-        if channel is not None:
-            channel.close()
+        # Wait for the transport thread to finish (client disconnects or timeout).
+        transport.join(timeout=CONFIG["auth_timeout"])
 
     except paramiko.SSHException:
         pass

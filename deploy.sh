@@ -21,9 +21,22 @@ apt-get install -y -qq python3 python3-pip gosu curl >/dev/null
 echo "[+] Installing Python packages..."
 pip3 install -q -r "$(dirname "$0")/requirements.txt"
 
+# ── Stop old services ──────────────────────────────────────────
+for svc in "${NAME}" "${NAME}-dashboard"; do
+    if systemctl is-active "${svc}" &>/dev/null; then
+        echo "[+] Stopping ${svc}..."
+        systemctl stop "${svc}"
+    fi
+done
+
+echo "[+] Cleaning ${SRC_DIR}..."
+if [[ -d "${SRC_DIR}" ]]; then
+    find "${SRC_DIR}" -mindepth 1 -not -name 'GeoLite2-City.mmdb' -delete
+fi
+
 echo "[+] Creating ${SRC_DIR}..."
 mkdir -p "${SRC_DIR}"
-cp -a "$(dirname "$0")"/* "${SRC_DIR}/"
+cp -a "$(dirname "$0")/." "${SRC_DIR}/"
 chown -R nobody:nogroup "${SRC_DIR}"
 
 echo "[+] Creating ${LOG_DIR}..."
@@ -48,19 +61,21 @@ cp "${SRC_DIR}/dashboard.service" "${DASHBOARD_SERVICE_FILE}"
 systemctl daemon-reload
 
 for svc in "${NAME}" "${NAME}-dashboard"; do
-    svc_file="/etc/systemd/system/${svc}.service"
-    if systemctl is-enabled "${svc}" &>/dev/null; then
-        echo "[+] Restarting ${svc}..."
-        systemctl restart "${svc}"
-    else
-        echo "[+] Enabling and starting ${svc}..."
-        systemctl enable --now "${svc}"
-    fi
+    echo "[+] Enabling and starting ${svc}..."
+    systemctl enable --now "${svc}" 2>&1 || echo "[-] Failed to start ${svc}"
 done
+
+# Allow services a moment to settle
+sleep 2
 
 echo "[+] Status:"
 for svc in "${NAME}" "${NAME}-dashboard"; do
+    echo "--- ${svc} ---"
     systemctl status "${svc}" --no-pager 2>&1 | head -8
+    if ! systemctl is-active --quiet "${svc}"; then
+        echo "  [!] ${svc} is NOT running. Recent logs:"
+        journalctl -u "${svc}" --no-pager -n 10 2>&1 | sed 's/^/  /'
+    fi
     echo ""
 done
 

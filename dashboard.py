@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import flask
+import ipaddress
 
 # ── In-memory stats ──────────────────────────────────────────────
 
@@ -227,6 +229,25 @@ def events_stream() -> flask.Response:
     )
 
 
+@app.route("/api/ban/<ip>", methods=["POST"])
+def api_ban(ip: str) -> flask.Response:
+    try:
+        addr = ipaddress.ip_address(ip)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            return flask.jsonify({"error": "refusing to ban private/reserved IP"}), 400
+    except ValueError:
+        return flask.jsonify({"error": "invalid IP"}), 400
+
+    cmd = ["iptables", "-I", "INPUT", "1", "-s", ip, "-j", "DROP"]
+    try:
+        subprocess.run(cmd, timeout=10, capture_output=True, text=True, check=True)
+        return flask.jsonify({"banned": ip})
+    except subprocess.CalledProcessError as exc:
+        return flask.jsonify({"error": exc.stderr.strip()}), 500
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return flask.jsonify({"error": str(exc)}), 500
+
+
 # ── CLI ──────────────────────────────────────────────────────────
 
 def parse_args() -> tuple[str, int, str]:
@@ -301,6 +322,11 @@ INDEX_HTML = """\
   .live-bar { color: #58a6ff; }
   #attempts-chart { display: flex; align-items: flex-end; gap: 2px; height: 60px; margin-top: 8px; }
   #attempts-chart div { background: #1f6feb; min-width: 6px; border-radius: 2px 2px 0 0; flex: 1; }
+  .ban-btn { background: #da3633; color: #fff; border: none; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.8em; white-space: nowrap; }
+  .ban-btn:hover { background: #f85149; }
+  .ban-btn:disabled { cursor: default; }
+  .ban-btn.banned { background: #238636; }
+  .ban-btn.error { background: #8b949e; }
 </style>
 </head>
 <body>
@@ -356,6 +382,7 @@ INDEX_HTML = """\
 <script>
 const STATS_INTERVAL = 5000;
 const MAX_FEED = 100;
+const bannedIps = new Set();
 
 function escapeHtml(text) {
   const d = document.createElement('div');
@@ -376,12 +403,41 @@ function renderTable(id, data, labelCol, valCol) {
   ).join('');
 }
 
+function renderTopIps(data) {
+  const tbody = document.getElementById('top-ips');
+  tbody.innerHTML = data.map(([ip, count]) => {
+    const banned = bannedIps.has(ip);
+    return `<tr><td>${escapeHtml(ip)}</td><td class="num">${count}</td><td>${banned ? '<span class="ban-btn banned">Banned</span>' : `<button class="ban-btn" data-ip="${escapeHtml(ip)}">Ban</button>`}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('.ban-btn:not(.banned)').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ip = btn.dataset.ip;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        const r = await fetch(`/api/ban/${ip}`, { method: 'POST' });
+        const result = await r.json();
+        if (r.ok) {
+          bannedIps.add(ip);
+          btn.outerHTML = '<span class="ban-btn banned">Banned</span>';
+        } else {
+          btn.textContent = result.error || 'Error';
+          btn.className = 'ban-btn error';
+        }
+      } catch {
+        btn.textContent = 'Error';
+        btn.className = 'ban-btn error';
+      }
+    });
+  });
+}
+
 function updateStats(data) {
   document.getElementById('stat-attempts').textContent = data.auth_attempts;
   document.getElementById('stat-ips').textContent = data.unique_ips;
   document.getElementById('stat-active').textContent = data.active_sessions;
   document.getElementById('stat-hourly').textContent = data.attempts_last_hour;
-  renderTable('top-ips', data.top_ips, 'IP', 'Attempts');
+  renderTopIps(data.top_ips);
   renderTable('top-countries', data.top_countries, 'Country', 'Attempts');
   renderTable('top-passwords', data.top_passwords, 'Password', 'Count');
   renderTable('top-credentials', data.top_credentials, 'Credential', 'Count');

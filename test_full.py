@@ -195,16 +195,16 @@ check("connection_timeout has session_id",
 print("\n=== 8. Dashboard ===")
 try:
     import urllib.request
-    resp = urllib.request.urlopen("http://127.0.0.1:5000/", timeout=5)
+    resp = urllib.request.urlopen("http://127.0.0.1:1235/", timeout=5)
     html = resp.read().decode()
     check("dashboard responds 200", resp.status == 200)
     check("dashboard has stats section", "stats" in html.lower() or "Events" in html or "Honeypot" in html)
     # Check API endpoints
-    stats = urllib.request.urlopen("http://127.0.0.1:5000/api/stats", timeout=3)
+    stats = urllib.request.urlopen("http://127.0.0.1:1235/api/stats", timeout=3)
     stat_data = json.loads(stats.read().decode())
     check("/api/stats returns JSON", isinstance(stat_data, dict))
     check("/api/stats has total_attempts", "total_attempts" in stat_data)
-    timeline = urllib.request.urlopen("http://127.0.0.1:5000/api/timeline", timeout=3)
+    timeline = urllib.request.urlopen("http://127.0.0.1:1235/api/timeline", timeout=3)
     t_data = json.loads(timeline.read().decode())
     check("/api/timeline returns list", isinstance(t_data, list))
 except Exception as e:

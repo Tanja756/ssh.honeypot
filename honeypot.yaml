@@ -13,7 +13,7 @@ profile: ubuntu-22.04
 
 # ── Network ────────────────────────────────────────────────────
 bind_host: 0.0.0.0
-bind_port: 2222
+bind_port: 22
 backlog: 100
 
 # ── Timeouts (seconds) ─────────────────────────────────────────
@@ -27,7 +27,7 @@ auth_rate_window: 60          # seconds for auth attempt limit
 auth_rate_max_attempts: 10    # max auth attempts per window per IP
 
 # ── Logging ────────────────────────────────────────────────────
-log_file: honeypot.log
+log_file: /var/log/ssh-honeypot/honeypot.log
 log_max_size: 104857600       # bytes before rotation (100 MB)
 log_max_backups: 2            # compressed archives to keep
 log_max_field_len: 256        # truncate username/password longer than this
@@ -55,8 +55,8 @@ auth_methods: "publickey,password,keyboard-interactive"
 # geoip_asn_db: /opt/GeoIP/GeoLite2-ASN.mmdb
 # geoip_cache_size: 10000
 
-# ── Blacklist (optional) ───────────────────────────────────────
-# blacklist_enabled: true
-# blacklist_ban_after: 100
-# blacklist_ban_command: iptables -A INPUT -s {ip} -j DROP
-# blacklist_ban_file: blacklist.json
+# ── Blacklist ──────────────────────────────────────────────────
+blacklist_enabled: true
+blacklist_ban_after: 100
+blacklist_ban_command: iptables -A INPUT -s {ip} -j DROP
+blacklist_ban_file: /opt/ssh-honeypot/blacklist.json
