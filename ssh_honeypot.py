@@ -490,9 +490,11 @@ def handle_connection(
     auth_limiter: RateLimiter,
 ) -> None:
     peer_ip, peer_port = addr
+    session_id = str(uuid.uuid4())
+    attack_id = session_id
 
     if not conn_limiter.allow(peer_ip):
-        log_event("connection_dropped", src_ip=peer_ip, reason="rate_limit")
+        log_event("connection_dropped", src_ip=peer_ip, reason="rate_limit", session_id=session_id)
         try:
             client_sock.close()
         except OSError:
@@ -510,8 +512,7 @@ def handle_connection(
         for key in host_keys:
             transport.add_server_key(key)
 
-        session_id = str(uuid.uuid4())
-        attack_id = session_id
+        server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport, session_id, attack_id)
         server = HoneypotServer(addr, transport.remote_version or "unknown", auth_limiter, transport, session_id, attack_id)
         transport.start_server(server=server)
 
@@ -527,11 +528,11 @@ def handle_connection(
     except paramiko.SSHException:
         pass
     except socket.timeout:
-        log_event("connection_timeout", src_ip=peer_ip)
+        log_event("connection_timeout", src_ip=peer_ip, session_id=session_id)
     except EOFError:
         pass
     except Exception as exc:
-        log_event("connection_error", src_ip=peer_ip, error=str(exc))
+        log_event("connection_error", src_ip=peer_ip, error=str(exc), session_id=session_id)
     finally:
         if transport is not None:
             transport.close()

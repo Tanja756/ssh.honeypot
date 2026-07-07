@@ -218,6 +218,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 ssh_host_key
+ssh_host_key_*
 honeypot.log
 *.pyc
 __pycache__/
