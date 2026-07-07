@@ -291,6 +291,7 @@ class HoneypotServer(paramiko.ServerInterface):
 
     def check_auth_none(self, username: str) -> int:
         self._log_auth(username=username, password="", auth_method="none")
+        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_auth_password(self, username: str, password: str) -> int:
@@ -301,6 +302,7 @@ class HoneypotServer(paramiko.ServerInterface):
             attempt=self._auth_attempts,
         )
         time.sleep(2)
+        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_auth_publickey(self, username: str, key: paramiko.PKey) -> int:
@@ -309,6 +311,7 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="publickey",
             fingerprint=key.get_fingerprint().hex() if hasattr(key, 'get_fingerprint') else "",
         )
+        self.event.set()
         return paramiko.AUTH_FAILED
 
     def check_auth_interactive(self, username: str, subtypes: list[str]) -> tuple[int, list[tuple[str, bool, bool]]]:
@@ -317,6 +320,7 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="keyboard-interactive",
             subtypes=",".join(subtypes) if subtypes else "",
         )
+        self.event.set()
         return paramiko.AUTH_FAILED, []
 
     def check_auth_interactive_response(self, responses: list[str]) -> int:
@@ -327,6 +331,8 @@ class HoneypotServer(paramiko.ServerInterface):
             auth_method="keyboard-interactive",
             attempt=self._auth_attempts,
         )
+        self.event.set()
+        return paramiko.AUTH_FAILED
 
     def check_channel_request(self, kind: str, chanid: int) -> int:
         log_event(
@@ -636,14 +642,14 @@ def main() -> None:
     auth_limiter = RateLimiter(CONFIG["auth_rate_window"], CONFIG["auth_rate_max_attempts"])
 
     # Start background pruner (prunes both limiters)
-    pruner_thread = threading.Thread(
+    conn_pruner = threading.Thread(
         target=_pruner_loop, args=(conn_limiter,), daemon=True
     )
-    pruner_thread.start()
-    pruner_thread = threading.Thread(
+    conn_pruner.start()
+    auth_pruner = threading.Thread(
         target=_pruner_loop, args=(auth_limiter,), daemon=True
     )
-    pruner_thread.start()
+    auth_pruner.start()
 
     # Create listening socket
     _server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -99,6 +99,9 @@ DOCKER
   С сохранением логов:
   docker run -d -p 2222:2222 -v $(pwd)/logs:/opt/ssh-honeypot ...
 
+  Замечание: для портов <1024 (например -p 22:2222) нужно добавить
+  --cap-add=NET_BIND_SERVICE или запускать с --user root --drop-privs.
+
 
 БЕЗОПАСНОСТЬ
 

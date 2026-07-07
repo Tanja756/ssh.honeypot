@@ -167,6 +167,8 @@ To persist logs:
 docker run -d -p 2222:2222 -v $(pwd)/logs:/opt/ssh-honeypot --name honeypot ssh-honeypot
 ```
 
+> **Note:** To bind to a port below 1024 (e.g. `-p 22:2222`), add `--cap-add=NET_BIND_SERVICE` or run the container as root with `--user root --drop-privs`.
+
 ## Security
 
 - The honeypot **never** grants shell access
